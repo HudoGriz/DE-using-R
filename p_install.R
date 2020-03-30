@@ -3,16 +3,20 @@ if (!requireNamespace("BiocManager", quietly = TRUE))
 BiocManager::install("affyPLM")
 BiocManager::install("vsn")
 BiocManager::install("limma")
-BiocManager::install("oligo")
 BiocManager::install("canine2.db")
-BiocManager::install("topGO")
-BiocManager::install("Rgraphviz")
-BiocManager::install("canine2.db")
-BiocManager::install("annotate")
+
+# there are some coplications with Vennerable
+# if not working try to instal the following
+BiocManager::install("RBGL")
+BiocManager::install("graph")
+install.packages("reshape")
+install.packages(
+  "Vennerable",
+  repos="http://r-forge.r-project.org",
+  type="source"
+  )
 
 install.packages("gplots")
-install.packages("ggplot2")
 install.packages("MASS")
 install.packages('shiny')
 install.packages("magick")
-install.packages("remotes")
