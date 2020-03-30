@@ -4,7 +4,7 @@
 
 This is a basic walkthrough on how to perform a differential gene expression analysis (**DE**).
 
-A in detail description of steps taken and commentary on results obtained you can fined [here](https://hudogriz2.shinyapps.io/report/) (it needs some time for the server to build the report).
+A in detail description of steps taken and commentary on results obtained you can finde [here](https://hudogriz2.shinyapps.io/report/) (it needs some time for the server to build the report).
 
 It uses packages from *Bioconductor*, mostly `affyPLM` and `limma`. In the file `p_install.R` are installation commands contained for all the packages required to complete the analysis, and obtain fancy plots.
 
