@@ -1,0 +1,956 @@
+---
+title: "Work Assignment - Report"
+author: "Blaž Vrhovšek"
+date: "3/30/2020"
+output:
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(shiny)
+library(magick)
+
+# dir.create("gifs")
+# setwd("gifs")
+
+# system("./move")
+
+do.gif <- function(p = "images/raw/chip_images/"){
+  im.names <- list.files(p, full.names=TRUE)
+images <- c()
+for (i in im.names) {
+  x <- image_read(i)
+  images <- image_join(images, x)
+}
+image_animate(image_scale(images, "400x400"), fps = 2, dispose = "previous")
+}
+
+
+shiny_plots <- function(
+  title1 = "raw",
+  title2 = "background correction",
+  title3 = "cross-array correction",
+  ppat = "images/raw/MAplot/",
+  ppat2 = "images/corection/background/MAplot/",
+  ppat3 = "images/corection/between/MAplot/",
+  w = 500,
+  h = 400,
+  f = ".jpg",
+  of = 6,
+  plots = 2
+) {
+  
+  f. <- gsub(
+    pattern = "\\.",
+    replacement = "",
+    x = f
+    )
+  contentType <- paste0('image/', f.)
+  
+  nfiles <- 
+  
+ui <- fluidPage(
+  fluidRow(
+    
+    column(12, align="center",
+           div(
+             style="display: inline-block;",
+             fluidRow(
+               h4(paste0(title1)),
+               imageOutput("myImage1")
+             ),
+             style = paste0("height:", h+of+25,"px;")
+           ),
+           div(
+             style="display: inline-block;",
+             fluidRow(
+               h4(paste0(title2)),
+               imageOutput("myImage2")
+             ),
+             style = paste0("height:", h+of+25,"px;")
+           ),
+           if (plots == 3) {
+             div(
+               style="display: inline-block;",
+               fluidRow(
+                 h4(paste0(title3)),
+                 imageOutput("myImage3")
+               ),
+               style = paste0("height:", h+of+25,"px;")
+             )                   
+           }
+    ),
+    column(12, align="center",
+           div(
+             style="display: inline-block;",
+             actionButton("pre", "<<")
+           ),
+           div(
+             style="display: inline-block;",
+             actionButton("nex", ">>")
+           )
+    )
+  )
+)
+  
+  server <- function(input, output, session) {
+    
+    n_pic <-  reactiveVal(1)
+    
+    pfiles <- list.files(ppat)
+    n <- length(pfiles)
+    
+    observe({
+      f.pic1 <- paste0(ppat, pfiles[n_pic()])
+      print(f.pic1)
+      f.pic2 <- paste0(ppat2, pfiles[n_pic()])
+      print(f.pic2)
+      f.pic3 <- paste0(ppat3, pfiles[n_pic()])
+      print(f.pic3)
+      
+        output$myImage1 <- renderImage({
+          # print(paste0(ppat, pfiles[n_pic()]))
+          list(src = f.pic1,
+               contentType = contentType,
+               width = w,
+               height = h,
+               alt = "This is alternate text")
+        }, deleteFile = FALSE)
+        
+        output$myImage2 <- renderImage({
+          # print(paste0(ppat2, n_pic(), f))
+          list(src = f.pic2,
+               contentType = contentType,
+               width = w,
+               height = h,
+               alt = "This is alternate text")
+        }, deleteFile = FALSE)
+        
+        if (plots == 3) {
+          output$myImage3 <- renderImage({
+            # print(paste0(ppat3, n_pic(), f))
+            list(src = f.pic3,
+                 contentType = contentType,
+                 width = w,
+                 height = h,
+                 alt = "This is alternate text")
+          }, deleteFile = FALSE)                 
+         }      
+    })
+    
+    observeEvent(input$nex,{
+      if (n_pic() == n) {
+        n_pic(1)
+      } else {
+        n_pic(n_pic()+1)
+      }
+    })
+    observeEvent(input$pre,{
+      if (n_pic() == 1) {
+        n_pic(n)
+      } else {
+        n_pic(n_pic()-1)
+      }
+    })
+  }
+  if (plots == 3) {
+    shinyApp(
+      ui,
+      server,
+      options = list(height = 1400)
+      )
+  } else {
+    shinyApp(
+      ui,
+      server,
+      options = list(height = 950)
+      )
+  }
+}
+
+
+filenames <- list.files("www/",pattern = ".fa",full.names = T)
+```
+
+# Intro
+
+In light of current events I decided to use affymetrix data generated from ferrets tissue treated with SARS-CoV and IFN.
+
+The data is provided by ***Kelvin DJ*** from the ***Division of Experimental Therapeutics*** of ***Toronto General Research Institute***. The experiment was set to investigate the change of gene regulation in lungs and blood in ferrets that were injected with IFN or SARS-CoV. The ferrets were divided into sub groups by day and injection. Control groups were left uninjected. Samples were taken on the day zero (control), first and second day. Further information can be found [here](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE22581).
+
+
+The analysis was done by running the data through different correction, normalization and `lmFit` methods. In this report the obtained plots and basic functions that were used are discussed.
+
+
+# Obtaining the data
+
+The data is downloaded with a series of `bash` commands. The commands can be found in the `run_me` file. The file also contains the instructions for folder creation. In this report I will only cover the essential commands for obtaining the sample data.
+
+The following commands are used for obtaining the `HTML` file, containing the download links for each sample. The downloads are `.tgz`, so we need to extract them. This can be done with the command `tar`.
+
+```
+  wget ftp://ftp.ncbi.nlm.nih.gov/geo/series/GSE22nnn/GSE22581/miniml/GSE22581_family.xml.tgz
+  tar zxvf GSE22581_family.xml.tgz GSE22581_family.xml
+```
+We can now obtain sample download links from the file by searching for lines with `.CEL.gz`. The amount of data wasn't too extensive, and because I was interested in all days, treatments and tissues I chose to download all samples. Samples can be further selected by defining specific patterns to search for (`"patern1|paren2"`). The output are download links, which we can pipe to `wget` to download the samples.
+
+```
+".CEL.gz" GSE22581_family.xml | wget -i -
+```
+
+# Creating targets
+
+The targets file connects sample names to their experimental information. The file should contain rows with sample name, and their data (treatment, time, tissue, etc.) separated by a delimiter.
+
+In this particular case, description of samples can be found on the description web page. Targets file can be obtained by downloading the `HTML` of the page and filtering out the content with *regular expressions*. The end result should be a  _comma-separated values_ like file.
+
+To obtain the `HTML`:
+
+```
+wget https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE22581
+```
+
+To obtain the sample name we can search by *GSE* pattern and extend to the first 6 characters (`-E`) to the right. `-o` shows only non empty parts of lines that match. As this returns all mentions of every sample, we can `sort -u` to get only unique mentions. The order of names is preserved. `> file.name` writes the output into a named file.
+
+```
+grep -E -o "GSM.{0,6}" acc.cgi\?acc\=GSE22581 | sort -u > sample_names.txt
+```
+
+All the description lines star with *Ferret*, so we can search for lines with that pattern.
+
+```
+grep "Ferret" acc.cgi\?acc\=GSE22581 > sample_descripton.txt
+```
+To separate the `HTML` element description from the text we can replace all *<* & *>* with a new line *\n* and again filter out lines by pattern. The filtered out lines are saved in a temporary file, which later on overwrites the original.
+
+```
+sed -i 's/</\n/g' sample_descripton.txt
+sed -i 's/>/\n/g' sample_descripton.txt
+grep "Ferret" sample_descripton.txt > tmp.txt
+mv tmp.txt sample_descripton.txt
+```
+Now the sample description can be edited with *regular expressions* to fit our requirements.
+
+
+```
+# Insert missing commas
+sed -E 's/([^,])(\son\sDay)/\1,\2/g' sample_descripton.txt > tmp.txt
+
+# Remove "Ferrets"
+sed -E 's/Ferret\s//g' tmp.txt > sample_descripton.txt
+
+# Remove "injected with"
+sed -E 's/injected with\s//g' sample_descripton.txt > tmp.txt
+
+# Replace "Not IFN-a2b" with "uninfected"
+sed -E 's/Not IFN-a2b/uninfected/g' tmp.txt > sample_descripton.txt
+
+# Remove "infecetd with"
+sed -E 's/infecetd with\s//g' sample_descripton.txt > tmp.txt
+
+# Remove "on Day"
+sed -E 's/on Day\s//g' tmp.txt > sample_descripton.txt
+
+# Remove "biological rep"
+sed -E 's/biological rep//g' sample_descripton.txt > tmp.txt
+
+# Remove spaces after comma
+sed -E 's/,\s/,/g' tmp.txt > sample_descripton.txt
+```
+The targets `data.frame` can now be created by reading sample names and sample description by the comma delimiter and column binding them together. This method only works if the order of sample names and descriptions is preserved during the editing.
+
+
+The final comand in the script is to run the `Rscript`
+
+```
+Rscript feret_script2.R
+```
+
+```{r}
+targets_f <- read.table(
+  "sample_descripton.txt",
+  sep = ","
+)
+targets_f <- cbind(
+  targets_f,
+  read.table("sample_names.txt")
+)
+names(targets_f) <- c(
+  "tissue",
+  "treatment",
+  "time",
+  "repetition",
+  "samples"
+)
+
+targets_f$treatment <- gsub("-", "_", targets_f$treatment)
+
+targets_f$samples <- as.character(targets_f$samples)
+
+head(targets_f)
+```
+
+The data frame can now be saved as a `.csv` or `.txt` file.
+
+```{r, eval=FALSE}
+write.csv(
+  targets_f,
+  "targets.csv",
+  row.names = FALSE
+)
+```
+
+
+# Reading the samples
+
+This is done by using the function `ReadAffy`. The file name and path can be pasted together with sample name from the `targets` dataframe and set patterns. The output is an `AffyBatch` object.
+
+```{r, eval=FALSE}
+ab_f <- ReadAffy(
+  filenames = paste0(
+    "samples/", targets_f$samples, ".CEL.gz"
+    )
+  )
+```
+
+The authors used the `canine2` annotation for the arrays. In the paper they argue that it is similar enough, as there is no specific annotation for ferrets. This can be obtained with:
+
+```{r, eval=FALSE}
+cdfName(ab_f)
+```
+
+
+# Data quality
+
+To be able to obtain the best results possible, raw data needs to be checked for potential artefacts. If any are observed, they can be mitigated with correction algorithms.
+
+To view the raw expression on the chip we can cycle over the sample names and use the function `image()` to plot and save the picture. The `name` is the defined path. It is wise to define it as a function, as it will be called more then once.
+
+```{r, eval=FALSE}
+get.plot.raw <- function(targ,
+                         ab,
+                         p = "raw") {
+  for (i in 1:length(targ$samples))
+  {
+    name <- paste("./images/", p, "/chip_images/", i, ".jpg", sep = "")
+    jpeg(name)
+    image(ab[, i], main = targ$samples[i])
+    dev.off()
+  }
+}
+
+```
+
+```{r, echo=FALSE}
+do.gif()
+```
+
+There are some easy to spot artefacts, such as horizontal lines, dots and scratches. There is also a overal fluctuation in intensity between samples.
+
+Another way to visualize spatial differences on the individual arrays is to create chip pseudo-images. Pseudo-images are generated by fitting a **probe-level model** (PLM) to the data. The model assumes that all probes of a probe set behave the same in all samples. Meaning that probes that bind well to their target should do so on all arrays (probes that bind with low affinity should do so on all arrays).
+
+A function with this functionality can be defined using the following code.
+
+```{r, eval=FALSE}
+get.plot.fit <- function(targ,
+                         ab,
+                         p = "raw",
+                         data.fited = FALSE) {
+  if (data.fited) {
+    pset_f <- ab
+  } else {
+    pset_f <- fitPLM(ab, background = F, normalize = F)
+  }
+
+  for (i in 1:length(targ$samples))
+  {
+    name <- paste("./images/", p, "/chip_pseudo_images/", i, ".jpg", sep = "")
+    jpeg(name)
+    image(pset_f, which = i, type = "resids",
+          main = targ$samples[i], add.legend=TRUE)
+    dev.off()
+  }
+}
+
+```
+
+Again we can clearly observe artefacts but in addition to previous ones we can locate new fluctuations in intensity.
+
+```{r, echo=FALSE}
+do.gif(p = "images/corection/background/chip_pseudo_images/")
+```
+
+For more graphical representation of the data we can use **histograms** and **MA plots**.
+
+By plotting the distribution of log base 2 intensities, we can generate histograms of probes for comparison of probe intensity behavior between different arrays. If you see differences in shape or center of the distributions, it means that normalization is required.
+
+Generation of histograms can be done with the following function.
+
+```{r, eval=FALSE}
+get.plot.hist <- function(targ,
+                          ab,
+                          p = "raw",
+                          t = "") {
+  color <- colours()[1:length(targ$samples)]
+  name <- paste0("./images/", p, "/histogram", t, ".jpg")
+  jpeg(name)
+  hist(
+    ab,
+    lwd = 2,
+    which = "both",
+    col = color,
+    ylab = "Density",
+    xlab = "Log2 intensities",
+    main = paste0("Histogram of ", p, " data")
+  )
+  dev.off()
+}
+
+```
+
+The distributions do not have a common peak and form. To be able to effectively compare the expressions, between arrays normalization should be performed.
+
+```{r, echo=FALSE}
+image_read("images/raw/histogram.jpg")
+```
+
+**MA plots** were originally developed for two-color arrays to detect differences between the two color labels on the same array. With them we can determine if the difference in expression pattern is due to technical errors or the cause of actual biological factors.
+
+Because affymetrix arrays only use a single color label, the comparison can be done by comparing each Affymetrix array to a pseudo-array. The pseudo array consists of the median intensity of each probe over all arrays.
+
+The MA plot shows to what extent the variability in expression depends on the expression level.
+
+Generation of **MA plots** can be done with the following function.
+
+```{r, eval=FALSE}
+get.plot.ma <- function(targ,
+                        ab,
+                        p = "raw") {
+  for (i in 1:length(targ$samples))
+  {
+    name <- paste("./images/", p, "/MAplot/", i, ".jpg", sep = "")
+    jpeg(name)
+    MAplot(ab, which = i)
+    dev.off()
+  }
+}
+
+```
+
+Ideally, the cloud of data points in the MA-plot should be centered around M=0 _blue line_. This is because we assume that the majority of the genes is not _diferentaly expresed_ **DE** and that the number of upregulated genes is similar to the number of downregulated genes. Additionally, the variability of the M values should be similar across different array-median array combinations. It can be observed that as the spread of the point cloud increases with the average intensity, the loess curve _red line_ moves further and further away from M=0. The goal is to have the data cloud as straight as possible with some outlining dots, representing under (if below) or overexpression (if above).
+
+```{r, echo=FALSE}
+do.gif(p = "images/raw/MAplot/")
+```
+
+***Disclaimer***: I experienced problems plotting the data with the above functions. There is some _masking_ of functions happening when using other `Bioconductor` packages.
+
+# Background correction
+
+The correction of the background was done using the `bg.adjust.gcrma` function from the `gcrma` package that is already contained in `affyPLM`. __GCRMA__ uses probe sequence information to estimate probe affinity to non-specific binding. 
+
+```{r, eval=FALSE}
+ab.gc_f <- bg.adjust.gcrma(
+  ab_f,
+  affinity.source = "reference",
+  type = "affinities",
+  GSB.adjust = T,
+  fast = F,
+  optical.correct = F
+)
+
+```
+
+### Plots affter corection
+
+```{r, echo=FALSE}
+shiny_plots(
+  ppat = "images/raw/chip_images/",
+  ppat2 = "images/corection/background/chip_images/",
+  of = 6
+  )
+```
+
+With the background correction there is some overall loss in intensity. There have seemingly some new lines emerged, but overall the intensity of artefacts has been reduced.
+
+On the MA plots it can be noted that the loess curve _red line_, has been overall brought closer to the _blue line_. We can observe the low intensity genes forming a dart-like shape on the plot where background correction was performed.
+
+```{r, echo=FALSE}
+shiny_plots(
+  ppat = "images/raw/MAplot/",
+  ppat2 = "images/corection/background/MAplot/"
+  )
+```
+
+On the histograms it is clear that the intensities around 5 have been shifted. There can now be two peaks observed. Arguably the distributions are more slimar, but the peaks still remain to be centered with a cross array normalization. The lower expressed peak could arguably be an artefact, but a similar distribution over all samples can be observed.
+
+```{r, echo=FALSE}
+image_scale(image_read("images/raw/histogram.jpg"), "400")
+image_scale(image_read("images/corection/background/histogram.jpg"), "400")
+```
+
+# Between arrays normalization
+
+This can be achieved by giving the output from background adjustment to the function `justvsn` contained in the package `vsn`. `justvsn` function is recommended because it contains methods for `AffyBatch` objects from the affy package.
+
+```{r, eval=FALSE}
+ab.vsn_f <- justvsn(ab.gc_f)
+```
+
+`justvsn` is equivalent to calling
+
+```
+fit = vsn2(x, ...)
+nx = predict(fit, newdata=x, useDataInFit = TRUE)
+```
+
+where `fit` is an object of class `vsn` that contains the fitted calibration and transformation parameters, and the method `predict` applies the fit to the data. More details about the process can be found [here](https://www.bioconductor.org/packages/release/bioc/vignettes/vsn/inst/doc/A-vsn.html).
+
+### Plots after normalization
+
+An additional loss of overall intensity can be observed on the data with between array correction. There is a more uniform intensity level over all the samples, with some darker points, which could indicate higher expressed genes. The lines and other artifacts are less visible.
+
+```{r, echo=FALSE}
+shiny_plots(
+  ppat = "images/raw/chip_images/",
+  ppat2 = "images/corection/background/chip_images/",
+  ppat3 = "images/corection/between/chip_images/",
+  plots = 3,
+  of = 6
+  )
+```
+
+The peak has moved to lower intensity, but is uniformal for all samples and the density level has increased. This results in samples being easier to compare with an uniform distribution and a peak with greater range of values.
+
+```{r, echo=FALSE}
+image_scale(image_read("images/corection/background/histogram.jpg"), "400")
+image_scale(image_read("images/corection/between/histogram.jpg"), "400")
+```
+
+# Differential gene expression
+
+### Data preparation
+
+For that we first need to define groups and determine which ones we want to compare. As the effect of normalization and correction on results are in our interest, the results of processes are combined into a list that will be cycled over in a `for loop`. `pset_f` is a converted `AffyBatch` into an `PLMset` object by fitting a specified robust linear model to the probe level data. The `e` is credited with the `coef` function, which extracts model coefficients from objects returned by modeling functions.
+
+```{r, eval=FALSE}
+do.data.sets <- function(sets,
+                         names) {
+  data.sets <- list()
+  for (d in 1:length(sets)) {
+    pset_f <- fitPLM(sets[[d]], background = F, normalize = F)
+    e <- coefs(pset_f)
+    x <- list(
+      pset_f = pset_f,
+      e = e
+    )
+    data.sets[[names[d]]] <- x
+  }
+  return(data.sets)
+}
+
+sets <- list(ab_f, ab.gc_f, ab.vsn_f)
+names <- c("raw", "background", "crossprobe")
+
+data.sets <- do.data.sets(
+  sets = sets,
+  names = names
+)
+```
+
+Next the parameters are defined. For this experiment the data will be divided into different days and tissues. Only the control samples will be taken from day 0 and used for background subtraction, as authors of the paper did.
+For the `lmFit` the __least squares__ and __robust regression__ will be used. Multiple testing correction will be performed with _Benjamini & Hochberg_ method, as stated in the paper.
+
+```{r, eval=FALSE}
+print("Starting with DE")
+tissues <- c("Lung", "Blood")
+methods <- c("ls", "robust")
+adj.method <- "BH"
+coefs <- c("xaction", "ifn", "virus")
+```
+
+Inside the `for loop` we now need to prepare the data. In the first part we assign elements from the list to variables. The print function enables tracking of progress and is useful for _debuging_. Save function can be used to save the generated object. Empty objects are prepared to be filled out with results of later analysis.
+
+```{r, eval=FALSE}
+
+set <- data.sets[set.n]
+e <- set[[1]]$e
+pset_f <- set[[1]]$pset_f
+set.name <- names(set)
+
+print(set.name)
+# save(file = "data.sets.Rdata", data.sets)
+
+top.g.l <- list()
+all.genes <- c()
+  
+```
+
+In the new `for loop` the tissue and day is defined and targets selected accordingly. The commented area indicates further code chunks also contained in this loop.
+
+```{r, eval=FALSE}
+for (tis in tissues) {
+  if (tis == "Blood") {
+    days <- 2
+  } else {
+    days <- unique(targets_f$time)[-1]
+  }
+  
+    for (day in days) {
+      print(paste0("processing: ", tis, " day-", day))
+    
+      d_targets <- targets_f[
+        (targets_f$time == day | targets_f$time == 0) & targets_f$tissue == tis, ]
+    }
+  
+  ###############
+  # DE analysis #
+  ###############
+}
+```
+
+### DE analysis
+
+The analysis will be performed using the __bioconductor__ package `limma`. First we need to define our experimental design. This process begins by getting the groups to be compared as levels. In this case those are the _treatments_.
+
+```{r, eval=FALSE}
+levs <- sort(unique(d_targets$treatment))
+L. <- factor(d_targets$treatment, levels = levs)
+```
+
+The experimental design is defined in the form of a `matrix`.
+
+```{r, eval=FALSE}
+design <- model.matrix(~ -1 + L.)
+rownames(design) <- L.
+```
+
+Now the contrasting is performed. As base we define the sample with no treatment at time zero. This will need to be subtracted from all treatments. `xaction` is set for the expression level difference between the **IFN** and **SARS-CoV** on a set day in a defined tissue. The `virus` and `ifn` indicate the difference between untreated and treated samples.
+
+```{r, eval=FALSE}
+cont.matrix <-
+  makeContrasts(
+    base = L.uninfected,
+    virus = L.SARS_CoV - L.uninfected,
+    ifn = L.IFN_a2b - L.uninfected,
+    xaction = L.SARS_CoV - L.uninfected - (L.IFN_a2b - L.uninfected),
+    levels = design
+  )
+```
+
+With the contrast matrix  and experimental design defined, the samples can now be selected and fitted with `lmFit` and contrasted with `contrasts.fit`. Given the microarray linear model fit to the `eBayes` function computes moderated t-statistics, moderates F-statistic, and log-odds of differential expression by empirical Bayes moderation of the standard errors towards a common value.
+
+```{r, eval=FALSE}
+for (method in methods) {
+  ## linear model fitting
+  print(paste0("linear model fitting, method: ", method))
+  sel <- paste0(d_targets$samples, ".CEL.gz")
+  fit <- lmFit(e[, colnames(e) %in% sel], design, method = method)
+  fit2 <- contrasts.fit(fit, cont.matrix)
+  fit2.eb <- eBayes(fit2)
+  
+  ######################
+  # TopTable & plotting #
+  ######################
+}
+```
+
+### TopTable
+
+What now remains is to obtain tables of significantly differentially expressed genes of different contrasts. The `p.values` need to be adjusted accordingly.
+
+This is achieved with the function `topTable`. Additionally the probe symbols can be matched with genes. For that we need the right annotation data, which in this case can be obtained from the `canine2.db` package. The linking happens with the following function:
+
+```{r, eval=FALSE}
+get.anotation <- function(ref = canine2SYMBOL, tt) {
+  anotation <- toTable(ref)
+
+  po <- match(row.names(tt), anotation$probe_id)
+  g.names <- anotation[, 2][po]
+
+  return(g.names)
+}
+```
+
+The creation of `topTable` with gene symbols is achieved with the following function:
+
+```{r, eval=FALSE}
+get.tt <- function(fit,
+                   adj.method,
+                   co = "xaction",
+                   so = "P",
+                   b = TRUE,
+                   g = TRUE,
+                   ref = canine2SYMBOL) {
+  tt <- topTable(
+    fit = fit,
+    adjust = adj.method,
+    coef = co,
+    sort.by = "P",
+    number = Inf
+  )
+
+  if (b == TRUE) {
+    tt$P <- 1 / (1 + exp(-tt$B))
+  }
+
+  if (g == TRUE) {
+    tt$gene <- get.anotation(ref = ref, tt)
+  }
+
+  return(tt)
+}
+
+```
+
+The defined functions are used to obtain the `tt` object, with input being `fit 2.be`, fit generated with the bayes method. The `adj.method` was defined previously as `HB`.
+
+```{r, eval=FALSE}
+tt_l <- list()
+
+for (c in coefs) {
+  print(paste("toptable for coef:", c))
+  tt <- get.tt(
+    fit = fit2.eb,
+    adj.method = adj.method,
+    co = c,
+    so = "P",
+    b = TRUE,
+    g = TRUE
+  )
+
+  n_sig.genes_f <- sum(tt$adj.P.Val < 0.05, na.rm = TRUE)
+  topgenes <- tt[tt[, "adj.P.Val"] < 0.05, ]
+  topgenes <- na.omit(topgenes)
+  topups <- topgenes[topgenes[, "logFC"] > 1, ]
+  topdowns <- topgenes[topgenes[, "logFC"] < -1, ]
+  top.g.l[[paste0(tis, ".day_", day)]] <- topgenes
+
+  all.genes <- c(all.genes, rownames(topgenes))
+  tt_l[[c]] <- tt
+}
+```
+
+The significant genes, over all contrasts, are filtered out and defined as up and down regulated. The data is appended into a previously defined lists.
+
+### plotting
+
+The plots are generated by defining a function which contains instructions for all the plotting functions. this way the main script is kept short.
+
+```{r, eval=FALSE}
+do.DGEplots <- function() {
+  ## graphs
+  # heat map
+  print("heat map")
+  eh <- e[rownames(topgenes), sel]
+  row.names(eh) <- get.anotation(tt = eh)
+  titl <- paste0(tis, "s ", "Day-", day)
+
+  col <- apply(d_targets, 1, function(x) {
+    paste0(x[2], ".rep", x[4])
+  })
+  colnames(eh) <- col
+
+  name <- get.pname(
+    type = "heatmap",
+    format = "png"
+  )
+  png(name)
+  heatmap.2(
+    eh,
+    col = redgreen(75),
+    scale = "row",
+    key = TRUE,
+    symkey = TRUE,
+    density.info = "none",
+    trace = "none",
+    cexRow = 0.8,
+    cexCol = 0.6,
+    main = titl
+  )
+  dev.off()
+
+  # volcano
+  print("volcano")
+  name <- get.pname(type = "volcano")
+  jpeg(name)
+  volcanoplot(
+    fit2.eb,
+    coef = 3,
+    highlight = 10,
+    main = titl
+    )
+  dev.off()
+
+  # Venn
+  print("Venn")
+  tt_v <- list(
+    ifn = sub(tt_l$ifn),
+    virus = sub(tt_l$virus)
+  )
+
+  vv <- Venn(tt_v,)
+  X11()
+  plot(
+    vv,
+    doWeights = FALSE
+  )
+  grid.text(titl, y=0.9, gp=gpar(col="red", cex=2))
+  savePlot(
+    filename =
+      get.pname(
+        type = "venn",
+        format = "png"
+      )
+  )
+  dev.off()
+
+  print("Finished!")
+}
+```
+
+There are three plot types generated: **heat map**, **volcano plot** and **Venn diagram**. For the **Venn diagram**. 
+
+For the **heat maps** intensity coefficients of significant units from the right samples are filtered out from the `e` object. Right gene symbols are replaced with array symbols. For plotting unique significant genes, all contrasts are being taken into account. 
+
+**Volcano plots** are generated using the function `volcanoplot` of package `limma`. As input we give the bayesian linear fitted object `fit2.eb` and indicate which coefficient of the linear model is to be plotted. In this case we plot the third one.
+
+For **Venn diagrams** tables with biggest differences gene expressions need to be provided. Here two different contrasts are provided (IFN and SARS-CoV vs. background) . With this plot the number of unique and common genes can be observed.
+
+the following function is used for data selection:
+
+```{r, eval=FALSE}
+sub <- function(tab, trash = 0.05) {
+  rownames(tab[tab$adj.P.Val < trash, ])
+}
+```
+
+and for defining the path:
+
+```{r, eval=FALSE}
+get.pname <- function(type,
+                      format = "jpg",
+                      tis. = tis,
+                      day. = day,
+                      set.name. = set.name,
+                      method. = method) {
+  name <- paste0(
+    "./images/DGEresults/",
+    set.name., "/",
+    method., "/",
+    type, "/",
+    tis., ".day-", day., ".", format
+  )
+}
+
+```
+
+# Results
+
+## Volcano plots
+
+Volcano plots show change of expression in relation to the statistical significance. All plots portrait the SARS-CoV to IFN contrast. This kind of plot enables us to observe the range and distribution of expression and significance of expression.
+
+### least squares
+
+```{r, echo=FALSE}
+shiny_plots(
+  ppat = "images/DGEresults/raw/ls/volcano/",
+  ppat2 = "images/DGEresults/background/ls/volcano/",
+  ppat3 = "images/DGEresults/crossprobe/ls/volcano/",
+  plots = 3,
+  of = 6
+  )
+```
+
+### robust regression
+
+```{r, echo=FALSE}
+shiny_plots(
+  ppat = "images/DGEresults/raw/robust/volcano/",
+  ppat2 = "images/DGEresults/background/robust/volcano/",
+  ppat3 = "images/DGEresults/crossprobe/robust/volcano/",
+  plots = 3,
+  of = 6
+  )
+```
+
+In the first plot, with the _least squares_ method and raw data we observe a clean __U__ shape which means that the data has `df.prior = Inf`, meaning that all the genes share the same pooled variance. That's the reason why the p-values are a monotonic function of fold change. _(Not sure what that means for the data)_
+
+With further correction the points spread out. In the only background corrected data we observe that the cluster is moved in the direction, indicating overexpression. After between array corrections the clusters are more balanced on both sides. This is understandable as the `svn` model has a prior belief of the genes being mostly equally up or down regulated, with some outliers. The genes which are believed to be significant are represented with a blue number. As for the results, there are more genes under expressed in the lungs treated with SARS-CoV, compared to blood where we observe a tendency to overexpression. The tendency is less evident where _robust regression_ was used. 
+
+## Venn diagrams
+
+Those plots show the number of genes which are significantly expressed in both treatments compared to the control. We are able to observe the number of genes that are expressed in both (in the cross section) or are unique for each treatment. 
+
+### least squares
+
+```{r, echo=FALSE}
+shiny_plots(
+  ppat = "images/DGEresults/raw/ls/venn/",
+  ppat2 = "images/DGEresults/background/ls/venn/",
+  ppat3 = "images/DGEresults/crossprobe/ls/venn/",
+  plots = 3,
+  of = 6,
+  f = ".png"
+  )
+```
+
+### robust regression
+
+```{r, echo=FALSE}
+shiny_plots(
+  ppat = "images/DGEresults/raw/robust/venn/",
+  ppat2 = "images/DGEresults/background/robust/venn/",
+  ppat3 = "images/DGEresults/crossprobe/robust/venn/",
+  plots = 3,
+  of = 6,
+  f = ".png"
+  )
+```
+
+We can observe that with `vsn` correction done both methods show the majority of significant genes being in both treatments. With background correction we obtain a somewhat more balanced distribution as with raw data where the number is mostly one sided. Here it is interesting to note that in blood samples more genes are differentially expressed by IFN, compared to lungs, where the virus causes more gens to differ.
+
+## Heat maps
+
+These kinds of plots show us the change in intensity of each gene. The individual tiles or rectangles in a heat map are scaled with a range of colors proportionate to gene expression values. The outcome makes it easy to check upon the rows, columns, and joint structural patterns. We can further use clustering to group by cause related samples and genes.
+
+### least squares
+
+```{r, echo=FALSE}
+shiny_plots(
+  ppat = "images/DGEresults/raw/ls/heatmap/",
+  ppat2 = "images/DGEresults/background/ls/heatmap/",
+  ppat3 = "images/DGEresults/crossprobe/ls/heatmap/",
+  plots = 3,
+  of = 6,
+  f = ".png"
+  )
+```
+
+### robust regression
+
+```{r, echo=FALSE}
+shiny_plots(
+  ppat = "images/DGEresults/raw/robust/heatmap/",
+  ppat2 = "images/DGEresults/background/robust/heatmap/",
+  ppat3 = "images/DGEresults/crossprobe/robust/heatmap/",
+  plots = 3,
+  f = ".png"
+  )
+```
+
+Easiest to spot is that the number of genes significant in all contrasts, indicated by the rows, drops in the case of _least squares_ method usage significantly. When _robust regression_ was used the number remained roughly the same. These plots can help by method selection when observing the untreated group, which should be as dark as possible.
+
+It needs to be noted that regardless of what normalization, correction or method for fitting was used, most significant genes in lungs treated by SARS-CoV were under expressed. This trend is even more visible by day two. Opposite to blood we see a tendency of overexpression caused by SARS-CoV. Interestingly some genes which are also significant, strongly oppose the trend of overall expression level difference caused by the treatment. This can be seen as a line of different colour in a mostly uniformly coloured column.
+
+# Conclusion
+
+From the results, obtained with different settings, it can be argued that the optimal process would consist of background correction with between array normalization, as it results in more even out vulcan plots and more significantly expressed genes being common to both treatments. For the `lmFit` methods _robust regression_ results in an overall higher unique gene expression per treatment, after between array normalization. What remains to be questioned is a higher expressions level being shown with the control, when using the _robust regression_. 
+
+In the end the usage of correction, normalization and methods for fitting the models depend on the goals of the analysis and the state of the data. To obtain the most scientifically correct results the prior beliefs should be set at the beginning of the process, and remain the same over the duration of the experiment. At the end the results should be evaluated by the findings and the prior belief updated.

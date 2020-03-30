@@ -1,0 +1,47 @@
+ #!/bin/bash
+[[ -d "./samples" ]] && echo "This file exists!"
+if ! [[ -d "./samples" ]]
+then
+  echo "Geting sample path ..."
+  wget ftp://ftp.ncbi.nlm.nih.gov/geo/series/GSE22nnn/GSE22581/miniml/GSE22581_family.xml.tgz
+  tar zxvf GSE22581_family.xml.tgz GSE22581_family.xml
+  echo "... Succes!"
+  
+  echo "Geting samples ..."
+  if ! [[ -d samples ]]
+  then
+      mkdir samples
+  fi
+  cd samples
+  egrep ".CEL.gz" ../GSE22581_family.xml | wget -i -
+  cd ..
+  echo "... Finished!"
+  
+  echo "Prepering targets file ..."
+  wget https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE22581
+  echo "... HTML downloaded ..."
+fi
+grep -E -o "GSM.{0,6}" acc.cgi\?acc\=GSE22581 | sort -u > sample_names.txt
+echo "... sample names prepared ..."
+
+grep "Ferret" acc.cgi\?acc\=GSE22581 > sample_descripton.txt
+sed -i 's/</\n/g' sample_descripton.txt
+sed -i 's/>/\n/g' sample_descripton.txt
+grep "Ferret" sample_descripton.txt > tmp.txt
+mv tmp.txt sample_descripton.txt
+sed -E 's/([^,])(\son\sDay)/\1,\2/g' sample_descripton.txt > tmp.txt
+
+sed -E 's/Ferret\s//g' tmp.txt > sample_descripton.txt
+sed -E 's/injected with\s//g' sample_descripton.txt > tmp.txt
+sed -E 's/Not IFN-a2b/uninfected/g' tmp.txt > sample_descripton.txt
+sed -E 's/infecetd with\s//g' sample_descripton.txt > tmp.txt
+sed -E 's/on Day\s//g' tmp.txt > sample_descripton.txt
+sed -E 's/biological rep//g' sample_descripton.txt > tmp.txt
+sed -E 's/,\s/,/g' tmp.txt > sample_descripton.txt
+rm tmp.txt
+
+echo "... targets.txt prepared!"
+
+echo "Starting Rscript for DE"
+
+Rscript feret_script.R
